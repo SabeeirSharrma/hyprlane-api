@@ -1,0 +1,8 @@
+# Local dev secrets — copy this to .dev.vars and fill in real values
+SUPABASE_URL=https://reieovanxlrqgdqnsyfq.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=
+DISCORD_CLIENT_ID=
+DISCORD_CLIENT_SECRET=
+BOT_SERVICE_SECRET=
+JWT_SIGNING_SECRET=
+TURNSTILE_SECRET_KEY=
