@@ -1,16 +1,16 @@
 import { Hono } from 'hono';
-import { supaQuery, supaInsert, supaUpsert, supaUpdate, type SupabaseEnv } from '../lib/supabase.js';
+import { supaQuery, supaInsert, supaUpsert, supaUpdate } from '../lib/supabase.js';
 import { hashPhone } from '../lib/crypto.js';
+import type { Env } from '../types.js';
 
-const verify = new Hono();
+const verify = new Hono<{ Bindings: Env }>();
 
 // GET /:token — validate token exists, unused, unexpired
 verify.get('/:token', async (c) => {
   const { token } = c.req.param();
-  const env = c.env as SupabaseEnv;
 
   const rows = await supaQuery(
-    env,
+    c.env,
     'pending_tokens',
     `?token=eq.${token}&select=discord_id,guild_id,expires_at,used`,
   );
@@ -46,11 +46,10 @@ verify.post('/:token/complete', async (c) => {
     challenge_passed: boolean;
     email?: string;
   }>();
-  const env = c.env as SupabaseEnv;
 
   // Validate token
   const tokenRows = await supaQuery(
-    env,
+    c.env,
     'pending_tokens',
     `?token=eq.${token}&select=discord_id,guild_id,used,expires_at`,
   );
@@ -94,7 +93,7 @@ verify.post('/:token/complete', async (c) => {
 
   // Upsert verified user
   const now = new Date().toISOString();
-  await supaUpsert(env, 'verified_users', {
+  await supaUpsert(c.env, 'verified_users', {
     discord_id: discordUser.id,
     verified_at: now,
     method: 'oauth_turnstile',
@@ -103,7 +102,7 @@ verify.post('/:token/complete', async (c) => {
   });
 
   // Mark token used
-  await supaUpdate(env, 'pending_tokens', `?token=eq.${token}`, { used: true });
+  await supaUpdate(c.env, 'pending_tokens', `?token=eq.${token}`, { used: true });
 
   // Notify bot to assign role (fire-and-forget)
   const botWebhookUrl = c.env.BOT_WEBHOOK_URL;
@@ -140,7 +139,6 @@ verify.post('/phone/:discordId/otp', async (c) => {
 verify.post('/phone/:discordId/confirm', async (c) => {
   const { discordId } = c.req.param();
   const body = await c.req.json<{ phone: string; otp: string }>();
-  const env = c.env as SupabaseEnv;
 
   // TODO: Verify OTP with SMS provider
 
@@ -149,14 +147,14 @@ verify.post('/phone/:discordId/confirm', async (c) => {
 
   // Check for duplicate
   const existing = await supaQuery(
-    env,
+    c.env,
     'verified_users',
     `?phone_hash=eq.${phoneHash}&select=discord_id`,
   );
 
   if (existing[0] && existing[0].discord_id !== discordId) {
     // Duplicate — reject and flag this account
-    await supaUpdate(env, 'verified_users', `?discord_id=eq.${discordId}`, {
+    await supaUpdate(c.env, 'verified_users', `?discord_id=eq.${discordId}`, {
       status: 'removed_duplicate',
       flagged_reason: 'duplicate_phone',
     });
@@ -168,7 +166,7 @@ verify.post('/phone/:discordId/confirm', async (c) => {
   }
 
   // Link phone
-  await supaUpdate(env, 'verified_users', `?discord_id=eq.${discordId}`, {
+  await supaUpdate(c.env, 'verified_users', `?discord_id=eq.${discordId}`, {
     phone_hash: phoneHash,
     phone_linked_at: new Date().toISOString(),
     // Clear flagged status if phone was the gate

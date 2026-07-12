@@ -1,9 +1,7 @@
 import type { Context, Next } from 'hono';
-import { verifyJwt } from '../lib/crypto.js';
 
 export interface BotEnv {
   BOT_SERVICE_SECRET: string;
-  JWT_SIGNING_SECRET: string;
 }
 
 /**
@@ -24,8 +22,9 @@ export async function requireBot(c: Context, next: Next) {
 }
 
 /**
- * Middleware: requires a valid session JWT in the Authorization header.
- * Decoded payload is available as c.get('session').
+ * Middleware: requires a valid Supabase Auth session in the Authorization header.
+ * Verifies the token with Supabase and extracts Discord user info.
+ * Decoded session is available as c.get('session').
  */
 export async function requireSession(c: Context, next: Next) {
   const auth = c.req.header('Authorization');
@@ -34,15 +33,41 @@ export async function requireSession(c: Context, next: Next) {
   }
 
   const token = auth.slice(7);
-  const payload = await verifyJwt<{ discord_id: string; access_token: string }>(
-    token,
-    c.env.JWT_SIGNING_SECRET,
-  );
 
-  if (!payload) {
+  // Verify token with Supabase Auth API
+  const res = await fetch(`${c.env.SUPABASE_URL}/auth/v1/user`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      apikey: c.env.SUPABASE_ANON_KEY,
+    },
+  });
+
+  if (!res.ok) {
     return c.json({ error: 'Invalid or expired session' }, 401);
   }
 
-  c.set('session', payload);
+  const user = await res.json() as {
+    id: string;
+    raw_user_meta_data?: {
+      provider?: string;
+      provider_id?: string;
+      full_name?: string;
+      custom_claims?: { global_name?: string };
+      access_token?: string;
+    };
+  };
+
+  // Extract Discord info from raw_user_meta_data
+  const metadata = user.raw_user_meta_data;
+  if (!metadata || metadata.provider !== 'discord' || !metadata.provider_id) {
+    return c.json({ error: 'Not a Discord account' }, 401);
+  }
+
+  c.set('session', {
+    discord_id: metadata.provider_id,
+    username: metadata.custom_claims?.global_name || metadata.full_name || 'unknown',
+    access_token: metadata.access_token,
+  });
+
   await next();
 }

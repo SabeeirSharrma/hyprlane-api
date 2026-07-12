@@ -2,13 +2,13 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
 import { requireBot } from './middleware/auth.js';
-import { supaQuery, type SupabaseEnv } from './lib/supabase.js';
+import { supaQuery } from './lib/supabase.js';
+import type { Env } from './types.js';
 import botRoutes from './routes/bot.js';
 import verifyRoutes from './routes/verify.js';
 import dashboardRoutes from './routes/dashboard.js';
-import authRoutes from './routes/auth.js';
 
-const app = new Hono();
+const app = new Hono<{ Bindings: Env }>();
 
 // --- Middleware ---
 app.use('*', logger());
@@ -38,8 +38,7 @@ app.route('/guilds', botRoutes);
 // Hlid route: /users/:discordId/hlid-card (bot-authed)
 app.get('/users/:discordId/hlid-card', requireBot, async (c) => {
   const { discordId } = c.req.param();
-  const env = c.env as SupabaseEnv;
-  const rows = await supaQuery(env, 'verified_users', `?discord_id=eq.${discordId}&select=verified_at,method,status,phone_hash,verified_guild_count,disposable_email_flag`);
+  const rows = await supaQuery(c.env, 'verified_users', `?discord_id=eq.${discordId}&select=verified_at,method,status,phone_hash,verified_guild_count,disposable_email_flag`);
   const user = rows[0];
   if (!user) return c.json({ error: 'User not found' }, 404);
   return c.json({
@@ -54,8 +53,6 @@ app.get('/users/:discordId/hlid-card', requireBot, async (c) => {
 });
 // Verify routes: /verify/:token, /verify/:token/complete, /verify/phone/:discordId/...
 app.route('/verify', verifyRoutes);
-// Auth routes: /auth/discord/callback
-app.route('/auth', authRoutes);
 // Dashboard routes: /dashboard/guilds/:guildId/...
 app.route('/dashboard', dashboardRoutes);
 

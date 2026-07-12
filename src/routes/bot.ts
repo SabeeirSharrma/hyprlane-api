@@ -1,18 +1,18 @@
 import { Hono } from 'hono';
 import { requireBot } from '../middleware/auth.js';
-import { supaQuery, supaInsert, supaUpsert, supaUpdate, type SupabaseEnv } from '../lib/supabase.js';
+import { supaQuery, supaInsert, supaUpdate } from '../lib/supabase.js';
 import { generateToken } from '../lib/crypto.js';
+import type { Env } from '../types.js';
 
-const bot = new Hono();
+const bot = new Hono<{ Bindings: Env }>();
 
 bot.use('*', requireBot);
 
 // GET /:guildId/members/:userId/status
 bot.get('/:guildId/members/:userId/status', async (c) => {
   const { guildId, userId } = c.req.param();
-  const env = c.env as SupabaseEnv;
 
-  const rows = await supaQuery(env, 'verified_users', `?discord_id=eq.${userId}&select=*`);
+  const rows = await supaQuery(c.env, 'verified_users', `?discord_id=eq.${userId}&select=*`);
   const user = rows[0];
 
   if (!user) {
@@ -39,13 +39,12 @@ bot.get('/:guildId/members/:userId/status', async (c) => {
 bot.post('/:guildId/verification-links', async (c) => {
   const { guildId } = c.req.param();
   const body = await c.req.json<{ discord_id: string }>();
-  const env = c.env as SupabaseEnv;
 
   const token = generateToken(32);
   const now = new Date();
   const expires = new Date(now.getTime() + 10 * 60 * 1000);
 
-  await supaInsert(env, 'pending_tokens', {
+  await supaInsert(c.env, 'pending_tokens', {
     token,
     discord_id: body.discord_id,
     guild_id: guildId,
@@ -67,10 +66,9 @@ bot.post('/:guildId/verification-links', async (c) => {
 bot.post('/:guildId/members/:userId/setstatus', async (c) => {
   const { guildId, userId } = c.req.param();
   const body = await c.req.json<{ status: string }>();
-  const env = c.env as SupabaseEnv;
 
   const rows = await supaQuery(
-    env,
+    c.env,
     'verified_users',
     `?discord_id=eq.${userId}&select=guild_overrides,verified_guild_count`,
   );
@@ -102,7 +100,7 @@ bot.post('/:guildId/members/:userId/setstatus', async (c) => {
     : body.status === 'unverified' && existing?.local_status === 'verified' ? -1
     : 0;
 
-  await supaUpdate(env, 'verified_users', `?discord_id=eq.${userId}`, {
+  await supaUpdate(c.env, 'verified_users', `?discord_id=eq.${userId}`, {
     guild_overrides: overrides,
     verified_guild_count: user.verified_guild_count + guildCountDelta,
   });

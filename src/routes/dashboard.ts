@@ -1,9 +1,10 @@
 import { Hono } from 'hono';
 import { requireSession } from '../middleware/auth.js';
-import { supaQuery, supaUpsert, supaUpdate, supaCount, type SupabaseEnv } from '../lib/supabase.js';
+import { supaQuery, supaUpsert, supaUpdate, supaCount } from '../lib/supabase.js';
 import { getUserGuilds } from '../lib/discord.js';
+import type { Env, SessionData } from '../types.js';
 
-const dashboard = new Hono();
+const dashboard = new Hono<{ Bindings: Env; Variables: { session: SessionData } }>();
 
 dashboard.use('*', requireSession);
 
@@ -18,7 +19,8 @@ async function hasManageGuild(accessToken: string, guildId: string): Promise<boo
 
 // GET /guilds — list user's manageable guilds
 dashboard.get('/guilds', async (c) => {
-  const session = c.get('session') as { access_token: string };
+  const session = c.get('session');
+  if (!session?.access_token) return c.json({ error: 'Missing access token' }, 401);
   const guilds = await getUserGuilds(session.access_token);
   return c.json(
     guilds
@@ -30,14 +32,14 @@ dashboard.get('/guilds', async (c) => {
 // GET /guilds/:guildId/config
 dashboard.get('/guilds/:guildId/config', async (c) => {
   const { guildId } = c.req.param();
-  const session = c.get('session') as { access_token: string };
+  const session = c.get('session');
+  if (!session?.access_token) return c.json({ error: 'Missing access token' }, 401);
 
   if (!(await hasManageGuild(session.access_token, guildId))) {
     return c.json({ error: 'No permission' }, 403);
   }
 
-  const env = c.env as SupabaseEnv;
-  const rows = await supaQuery(env, 'guild_config', `?guild_id=eq.${guildId}&select=*`);
+  const rows = await supaQuery(c.env, 'guild_config', `?guild_id=eq.${guildId}&select=*`);
 
   if (!rows[0]) {
     return c.json({
@@ -57,16 +59,16 @@ dashboard.get('/guilds/:guildId/config', async (c) => {
 // PUT /guilds/:guildId/config
 dashboard.put('/guilds/:guildId/config', async (c) => {
   const { guildId } = c.req.param();
-  const session = c.get('session') as { access_token: string };
+  const session = c.get('session');
+  if (!session?.access_token) return c.json({ error: 'Missing access token' }, 401);
 
   if (!(await hasManageGuild(session.access_token, guildId))) {
     return c.json({ error: 'No permission' }, 403);
   }
 
   const body = await c.req.json();
-  const env = c.env as SupabaseEnv;
 
-  await supaUpsert(env, 'guild_config', { guild_id: guildId, ...body });
+  await supaUpsert(c.env, 'guild_config', { guild_id: guildId, ...body });
 
   return c.json({ ok: true });
 });
@@ -74,15 +76,15 @@ dashboard.put('/guilds/:guildId/config', async (c) => {
 // GET /guilds/:guildId/verified-members
 dashboard.get('/guilds/:guildId/verified-members', async (c) => {
   const { guildId } = c.req.param();
-  const session = c.get('session') as { access_token: string };
+  const session = c.get('session');
+  if (!session?.access_token) return c.json({ error: 'Missing access token' }, 401);
 
   if (!(await hasManageGuild(session.access_token, guildId))) {
     return c.json({ error: 'No permission' }, 403);
   }
 
-  const env = c.env as SupabaseEnv;
   const rows = await supaQuery(
-    env,
+    c.env,
     'verified_users',
     `?status=eq.active&select=discord_id,verified_at,method,status,phone_hash,verified_guild_count,guild_overrides`,
   );
@@ -99,16 +101,15 @@ dashboard.get('/guilds/:guildId/verified-members', async (c) => {
 // POST /guilds/:guildId/members/:userId/revoke
 dashboard.post('/guilds/:guildId/members/:userId/revoke', async (c) => {
   const { guildId, userId } = c.req.param();
-  const session = c.get('session') as { access_token: string };
+  const session = c.get('session');
+  if (!session?.access_token) return c.json({ error: 'Missing access token' }, 401);
 
   if (!(await hasManageGuild(session.access_token, guildId))) {
     return c.json({ error: 'No permission' }, 403);
   }
 
-  const env = c.env as SupabaseEnv;
-
   const rows = await supaQuery(
-    env,
+    c.env,
     'verified_users',
     `?discord_id=eq.${userId}&select=guild_overrides,verified_guild_count`,
   );
@@ -124,7 +125,7 @@ dashboard.post('/guilds/:guildId/members/:userId/revoke', async (c) => {
     updated_at: new Date().toISOString(),
   };
 
-  await supaUpdate(env, 'verified_users', `?discord_id=eq.${userId}`, {
+  await supaUpdate(c.env, 'verified_users', `?discord_id=eq.${userId}`, {
     guild_overrides: overrides,
     verified_guild_count: user.verified_guild_count - (wasVerified ? 1 : 0),
   });
@@ -135,16 +136,15 @@ dashboard.post('/guilds/:guildId/members/:userId/revoke', async (c) => {
 // GET /guilds/:guildId/stats
 dashboard.get('/guilds/:guildId/stats', async (c) => {
   const { guildId } = c.req.param();
-  const session = c.get('session') as { access_token: string };
+  const session = c.get('session');
+  if (!session?.access_token) return c.json({ error: 'Missing access token' }, 401);
 
   if (!(await hasManageGuild(session.access_token, guildId))) {
     return c.json({ error: 'No permission' }, 403);
   }
 
-  const env = c.env as SupabaseEnv;
-
-  const verifiedCount = await supaCount(env, 'verified_users', '?status=eq.active');
-  const flaggedCount = await supaCount(env, 'verified_users', '?status=eq.flagged_needs_phone');
+  const verifiedCount = await supaCount(c.env, 'verified_users', '?status=eq.active');
+  const flaggedCount = await supaCount(c.env, 'verified_users', '?status=eq.flagged_needs_phone');
 
   return c.json({
     verified_count: verifiedCount,
