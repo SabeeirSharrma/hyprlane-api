@@ -5,6 +5,24 @@ import type { Env } from '../types.js';
 
 const verify = new Hono<{ Bindings: Env }>();
 
+// Verify Turnstile token server-side
+async function verifyTurnstile(env: Env, token: string, ip: string): Promise<boolean> {
+  if (!env.TURNSTILE_SECRET_KEY) return true; // Skip if not configured
+
+  const res = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      secret: env.TURNSTILE_SECRET_KEY,
+      response: token,
+      remoteip: ip,
+    }).toString(),
+  });
+
+  const data = await res.json() as { success: boolean };
+  return data.success;
+}
+
 // GET /:token — validate token exists, unused, unexpired
 verify.get('/:token', async (c) => {
   const { token } = c.req.param();
@@ -43,7 +61,7 @@ verify.post('/:token/complete', async (c) => {
   const body = await c.req.json<{
     access_token: string;
     discord_id: string;
-    challenge_passed: boolean;
+    turnstile_token: string;
     email?: string;
   }>();
 
@@ -58,8 +76,12 @@ verify.post('/:token/complete', async (c) => {
   if (!tokenRow) return c.json({ error: 'Token not found' }, 404);
   if (tokenRow.used) return c.json({ error: 'Token already used' }, 410);
   if (new Date(tokenRow.expires_at) < new Date()) return c.json({ error: 'Token expired' }, 410);
-  if (!body.challenge_passed) {
-    return c.json({ error: 'Challenge not passed' }, 400);
+
+  // Verify Turnstile server-side
+  const clientIP = c.req.header('cf-connecting-ip') || '';
+  const turnstileValid = await verifyTurnstile(c.env, body.turnstile_token, clientIP);
+  if (!turnstileValid) {
+    return c.json({ error: 'Turnstile challenge failed' }, 403);
   }
 
   // Verify access_token against Discord API — confirms identity server-side
@@ -93,32 +115,42 @@ verify.post('/:token/complete', async (c) => {
 
   // Upsert verified user
   const now = new Date().toISOString();
+  const guildId = tokenRow.guild_id;
+
+  // Fetch existing user to get current guild_overrides
+  const existingRows = await supaQuery(
+    c.env,
+    'verified_users',
+    `?discord_id=eq.${discordUser.id}&select=guild_overrides,verified_guild_count`,
+  );
+  const existing = existingRows[0];
+
+  const overrides = existing?.guild_overrides || {};
+  const wasVerifiedInGuild = overrides[guildId]?.local_status === 'verified';
+
+  // Set guild override to verified
+  overrides[guildId] = {
+    local_status: 'verified',
+    verified_at: now,
+    role_assigned: false, // Bot will poll and assign
+  };
+
+  // Increment guild count if newly verified in this guild
+  const currentCount = existing?.verified_guild_count || 0;
+  const newCount = wasVerifiedInGuild ? currentCount : currentCount + 1;
+
   await supaUpsert(c.env, 'verified_users', {
     discord_id: discordUser.id,
     verified_at: now,
     method: 'oauth_turnstile',
     status: 'active',
     disposable_email_flag: disposableFlag,
+    guild_overrides: overrides,
+    verified_guild_count: newCount,
   });
 
   // Mark token used
   await supaUpdate(c.env, 'pending_tokens', `?token=eq.${token}`, { used: true });
-
-  // Notify bot to assign role (fire-and-forget)
-  const botWebhookUrl = c.env.BOT_WEBHOOK_URL;
-  if (botWebhookUrl) {
-    c.executionCtx.waitUntil(
-      fetch(botWebhookUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          event: 'member-verified',
-          discord_id: discordUser.id,
-          guild_id: tokenRow.guild_id,
-        }),
-      }).catch(() => {}),
-    );
-  }
 
   return c.json({ ok: true });
 });

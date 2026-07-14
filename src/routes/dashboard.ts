@@ -73,7 +73,7 @@ dashboard.put('/guilds/:guildId/config', async (c) => {
   return c.json({ ok: true });
 });
 
-// GET /guilds/:guildId/verified-members
+// GET /guilds/:guildId/verified-members — per-guild
 dashboard.get('/guilds/:guildId/verified-members', async (c) => {
   const { guildId } = c.req.param();
   const session = c.get('session');
@@ -89,10 +89,10 @@ dashboard.get('/guilds/:guildId/verified-members', async (c) => {
     `?status=eq.active&select=discord_id,verified_at,method,status,phone_hash,verified_guild_count,guild_overrides`,
   );
 
-  // Filter out users with local unverified override for this guild
+  // Only include users who are verified in THIS guild
   const members = rows.filter(u => {
     const override = u.guild_overrides?.[guildId];
-    return override?.local_status !== 'unverified';
+    return override?.local_status === 'verified';
   });
 
   return c.json(members);
@@ -133,7 +133,7 @@ dashboard.post('/guilds/:guildId/members/:userId/revoke', async (c) => {
   return c.json({ ok: true });
 });
 
-// GET /guilds/:guildId/stats
+// GET /guilds/:guildId/stats — per-guild
 dashboard.get('/guilds/:guildId/stats', async (c) => {
   const { guildId } = c.req.param();
   const session = c.get('session');
@@ -143,7 +143,18 @@ dashboard.get('/guilds/:guildId/stats', async (c) => {
     return c.json({ error: 'No permission' }, 403);
   }
 
-  const verifiedCount = await supaCount(c.env, 'verified_users', '?status=eq.active');
+  // Fetch all active users and filter by guild
+  const allActive = await supaQuery(
+    c.env,
+    'verified_users',
+    `?status=eq.active&select=discord_id,guild_overrides`,
+  );
+
+  const verifiedCount = allActive.filter(u => {
+    const override = u.guild_overrides?.[guildId];
+    return override?.local_status === 'verified';
+  }).length;
+
   const flaggedCount = await supaCount(c.env, 'verified_users', '?status=eq.flagged_needs_phone');
 
   return c.json({
