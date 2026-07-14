@@ -25,7 +25,7 @@ app.use('*', cors({
     return '';
   },
   allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowHeaders: ['Content-Type', 'Authorization'],
+  allowHeaders: ['Content-Type', 'Authorization', 'X-Discord-Token'],
   credentials: true,
 }));
 
