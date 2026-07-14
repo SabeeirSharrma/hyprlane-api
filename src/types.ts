@@ -8,8 +8,6 @@ export interface Env {
   BOT_SERVICE_SECRET: string;
   BOT_WEBHOOK_URL?: string;
   TURNSTILE_SECRET_KEY?: string;
-  SMS_PROVIDER?: string;
-  MSG91_AUTH_KEY?: string;
 }
 
 export interface SessionData {

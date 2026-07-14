@@ -121,7 +121,7 @@ dashboard.get('/guilds/:guildId/verified-members', async (c) => {
   const rows = await supaQuery(
     c.env,
     'verified_users',
-    `?status=eq.active&select=discord_id,verified_at,method,status,phone_hash,verified_guild_count,guild_overrides`,
+    `?status=eq.active&select=discord_id,verified_at,method,status,verified_guild_count,guild_overrides`,
   );
 
   // Include users who are verified OR pending mod review in THIS guild
@@ -222,20 +222,6 @@ dashboard.post('/guilds/:guildId/members/:userId/revoke', async (c) => {
   return c.json({ ok: true });
 });
 
-// GET /guilds/:guildId/flagged-members — flagged accounts globally
-dashboard.get('/guilds/:guildId/flagged-members', async (c) => {
-  const session = c.get('session');
-  if (!session?.access_token) return c.json({ error: 'Missing access token' }, 401);
-
-  const rows = await supaQuery(
-    c.env,
-    'verified_users',
-    `?status=eq.flagged_needs_phone&select=discord_id,status,flagged_reason,verified_at`,
-  );
-
-  return c.json(rows);
-});
-
 // GET /guilds/:guildId/stats — per-guild
 dashboard.get('/guilds/:guildId/stats', async (c) => {
   const { guildId } = c.req.param();
@@ -263,7 +249,7 @@ dashboard.get('/guilds/:guildId/stats', async (c) => {
     return override?.local_status === 'pending_mod_review';
   }).length;
 
-  const flaggedCount = await supaCount(c.env, 'verified_users', '?status=eq.flagged_needs_phone');
+  const flaggedCount = 0;
 
   return c.json({
     verified_count: verifiedCount,

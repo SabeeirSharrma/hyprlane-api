@@ -59,7 +59,6 @@ bot.get('/:guildId/members/:userId/status', async (c) => {
     status: user.status,
     verified_at: user.verified_at,
     method: user.method,
-    phone_linked: !!user.phone_hash,
     disposable_email_flag: user.disposable_email_flag,
     local_status: localStatus || null,
     verified_guild_count: user.verified_guild_count,
@@ -173,7 +172,7 @@ bot.get('/:guildId/verified-members', async (c) => {
   const rows = await supaQuery(
     c.env,
     'verified_users',
-    `?status=eq.active&select=discord_id,verified_at,method,status,phone_hash,verified_guild_count,guild_overrides`,
+    `?status=eq.active&select=discord_id,verified_at,method,status,verified_guild_count,guild_overrides`,
   );
 
   const members = rows.filter(u => {
@@ -199,7 +198,7 @@ bot.get('/:guildId/stats', async (c) => {
     return override?.local_status === 'verified';
   }).length;
 
-  const flaggedCount = await supaCount(c.env, 'verified_users', '?status=eq.flagged_needs_phone');
+  const flaggedCount = 0;
 
   return c.json({
     verified_count: verifiedCount,

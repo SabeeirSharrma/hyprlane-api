@@ -79,7 +79,7 @@ app.route('/guilds', botRoutes);
 // Hlid route: /users/:discordId/hlid-card (bot-authed)
 app.get('/users/:discordId/hlid-card', requireBot, async (c) => {
   const { discordId } = c.req.param();
-  const rows = await supaQuery(c.env, 'verified_users', `?discord_id=eq.${discordId}&select=verified_at,method,status,phone_hash,verified_guild_count,disposable_email_flag`);
+  const rows = await supaQuery(c.env, 'verified_users', `?discord_id=eq.${discordId}&select=verified_at,method,status,verified_guild_count,disposable_email_flag`);
   const user = rows[0];
   if (!user) return c.json({ error: 'User not found' }, 404);
   return c.json({
@@ -87,12 +87,11 @@ app.get('/users/:discordId/hlid-card', requireBot, async (c) => {
     verified: user.status === 'active',
     verified_at: user.verified_at,
     method: user.method,
-    phone_linked: !!user.phone_hash,
     verified_guild_count: user.verified_guild_count,
     disposable_email_flag: user.disposable_email_flag,
   });
 });
-// Verify routes: /verify/:token, /verify/:token/complete, /verify/phone/:discordId/...
+// Verify routes: /verify/:token, /verify/:token/complete
 app.route('/verify', verifyRoutes);
 // Dashboard routes: /dashboard/guilds/:guildId/...
 app.route('/dashboard', dashboardRoutes);
