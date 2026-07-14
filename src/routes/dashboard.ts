@@ -103,6 +103,28 @@ dashboard.put('/guilds/:guildId/config', async (c) => {
 
   const body = await c.req.json();
 
+  // Check plan before allowing paid features
+  const PAID_FEATURES = [
+    'booster_bypass', 'raid_protection', 'audit_export', 'custom_success_page',
+    'custom_timeout', 'vanity_url', 'config_duplicate', 'custom_verification_domain',
+  ];
+
+  // Fetch current config to check plan
+  const existingRows = await supaQuery(c.env, 'guild_config', `?guild_id=eq.${guildId}&select=plan`);
+  const plan = existingRows[0]?.plan || 'free';
+
+  if (plan === 'free') {
+    const requestedFeatures = body.enrolled_features || [];
+    const paidFeaturesRequested = requestedFeatures.filter((f: string) => PAID_FEATURES.includes(f));
+    if (paidFeaturesRequested.length > 0) {
+      return c.json({
+        error: 'upgrade_required',
+        message: `These features require a paid plan: ${paidFeaturesRequested.join(', ')}`,
+        required_plan: 'paid',
+      }, 403);
+    }
+  }
+
   await supaUpsert(c.env, 'guild_config', { guild_id: guildId, ...body });
 
   return c.json({ ok: true });
