@@ -73,7 +73,7 @@ dashboard.put('/guilds/:guildId/config', async (c) => {
   return c.json({ ok: true });
 });
 
-// GET /guilds/:guildId/verified-members — per-guild
+// GET /guilds/:guildId/verified-members — per-guild (includes verified + pending_mod_review)
 dashboard.get('/guilds/:guildId/verified-members', async (c) => {
   const { guildId } = c.req.param();
   const session = c.get('session');
@@ -89,13 +89,67 @@ dashboard.get('/guilds/:guildId/verified-members', async (c) => {
     `?status=eq.active&select=discord_id,verified_at,method,status,phone_hash,verified_guild_count,guild_overrides`,
   );
 
-  // Only include users who are verified in THIS guild
+  // Include users who are verified OR pending mod review in THIS guild
   const members = rows.filter(u => {
     const override = u.guild_overrides?.[guildId];
-    return override?.local_status === 'verified';
+    const localStatus = override?.local_status;
+    return localStatus === 'verified' || localStatus === 'pending_mod_review';
   });
 
   return c.json(members);
+});
+
+// POST /guilds/:guildId/members/:userId/setstatus — dashboard mod action
+dashboard.post('/guilds/:guildId/members/:userId/setstatus', async (c) => {
+  const { guildId, userId } = c.req.param();
+  const session = c.get('session');
+  if (!session?.access_token) return c.json({ error: 'Missing access token' }, 401);
+
+  if (!(await hasManageGuild(session.access_token, guildId))) {
+    return c.json({ error: 'No permission' }, 403);
+  }
+
+  const body = await c.req.json<{ status: string }>();
+
+  const rows = await supaQuery(
+    c.env,
+    'verified_users',
+    `?discord_id=eq.${userId}&select=guild_overrides,verified_guild_count`,
+  );
+
+  const user = rows[0];
+  if (!user) return c.json({ error: 'User not found' }, 404);
+
+  const overrides = user.guild_overrides || {};
+  const existing = overrides[guildId];
+
+  if (body.status === 'verified') {
+    overrides[guildId] = {
+      local_status: 'verified',
+      updated_by: session.discord_id,
+      updated_at: new Date().toISOString(),
+    };
+  } else if (body.status === 'unverified') {
+    overrides[guildId] = {
+      local_status: 'unverified',
+      updated_by: session.discord_id,
+      updated_at: new Date().toISOString(),
+    };
+  } else {
+    delete overrides[guildId];
+  }
+
+  const guildCountDelta =
+    body.status === 'verified' && existing?.local_status !== 'verified' ? 1
+    : body.status === 'unverified' && existing?.local_status === 'verified' ? -1
+    : 0;
+
+  await supaUpdate(c.env, 'verified_users', `?discord_id=eq.${userId}`, {
+    guild_overrides: overrides,
+    verified_guild_count: user.verified_guild_count + guildCountDelta,
+  });
+
+  return c.json({ ok: true, local_status: body.status });
 });
 
 // POST /guilds/:guildId/members/:userId/revoke
@@ -133,6 +187,20 @@ dashboard.post('/guilds/:guildId/members/:userId/revoke', async (c) => {
   return c.json({ ok: true });
 });
 
+// GET /guilds/:guildId/flagged-members — flagged accounts globally
+dashboard.get('/guilds/:guildId/flagged-members', async (c) => {
+  const session = c.get('session');
+  if (!session?.access_token) return c.json({ error: 'Missing access token' }, 401);
+
+  const rows = await supaQuery(
+    c.env,
+    'verified_users',
+    `?status=eq.flagged_needs_phone&select=discord_id,status,flagged_reason,verified_at`,
+  );
+
+  return c.json(rows);
+});
+
 // GET /guilds/:guildId/stats — per-guild
 dashboard.get('/guilds/:guildId/stats', async (c) => {
   const { guildId } = c.req.param();
@@ -155,10 +223,16 @@ dashboard.get('/guilds/:guildId/stats', async (c) => {
     return override?.local_status === 'verified';
   }).length;
 
+  const pendingCount = allActive.filter(u => {
+    const override = u.guild_overrides?.[guildId];
+    return override?.local_status === 'pending_mod_review';
+  }).length;
+
   const flaggedCount = await supaCount(c.env, 'verified_users', '?status=eq.flagged_needs_phone');
 
   return c.json({
     verified_count: verifiedCount,
+    pending_count: pendingCount,
     flagged_count: flaggedCount,
   });
 });

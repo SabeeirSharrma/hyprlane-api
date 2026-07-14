@@ -29,8 +29,49 @@ app.use('*', cors({
   credentials: true,
 }));
 
-// --- Health check ---
+// --- Rate limiting ---
+// Simple in-memory sliding window rate limiter
+const rateLimits = new Map<string, { count: number; resetAt: number }>();
+
+function rateLimit(windowMs: number, max: number) {
+  return async (c: any, next: () => Promise<void>) => {
+    const ip = c.req.header('cf-connecting-ip') || 'unknown';
+    const path = c.req.path;
+    const key = `${ip}:${path}`;
+    const now = Date.now();
+
+    const entry = rateLimits.get(key);
+    if (entry && entry.resetAt > now) {
+      if (entry.count >= max) {
+        return c.json({ error: 'Rate limit exceeded' }, 429);
+      }
+      entry.count++;
+    } else {
+      rateLimits.set(key, { count: 1, resetAt: now + windowMs });
+    }
+
+    // Cleanup old entries periodically
+    if (rateLimits.size > 10000) {
+      for (const [k, v] of rateLimits) {
+        if (v.resetAt < now) rateLimits.delete(k);
+      }
+    }
+
+    await next();
+  };
+}
+
+// Health check — no rate limit
 app.get('/', (c) => c.json({ status: 'ok', service: 'hyprlane-api', version: '0.1.0' }));
+
+// Verify endpoints — strict rate limit (5 requests per minute per IP)
+app.use('/verify/*', rateLimit(60_000, 5));
+
+// Bot endpoints — generous rate limit (60 requests per minute per IP)
+app.use('/guilds/*', rateLimit(60_000, 60));
+
+// Dashboard endpoints — moderate rate limit (30 requests per minute per IP)
+app.use('/dashboard/*', rateLimit(60_000, 30));
 
 // --- Route mounting ---
 // Bot routes: /guilds/:guildId/...
