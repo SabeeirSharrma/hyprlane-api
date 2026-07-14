@@ -3,6 +3,7 @@ import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
 import { requireBot } from './middleware/auth.js';
 import { supaQuery } from './lib/supabase.js';
+import { renderHlidCard } from './lib/hlid.js';
 import type { Env } from './types.js';
 import botRoutes from './routes/bot.js';
 import verifyRoutes from './routes/verify.js';
@@ -82,13 +83,43 @@ app.get('/users/:discordId/hlid-card', requireBot, async (c) => {
   const rows = await supaQuery(c.env, 'verified_users', `?discord_id=eq.${discordId}&select=verified_at,method,status,verified_guild_count,disposable_email_flag`);
   const user = rows[0];
   if (!user) return c.json({ error: 'User not found' }, 404);
-  return c.json({
+
+  // Fetch Discord user info for avatar and username
+  let username = 'Unknown';
+  let avatarUrl = '';
+  let accountCreatedAt = null;
+
+  try {
+    const discordRes = await fetch(`https://discord.com/api/v10/users/${discordId}`, {
+      headers: { Authorization: `Bot ${c.env.DISCORD_BOT_TOKEN}` },
+    });
+    if (discordRes.ok) {
+      const discordUser = await discordRes.json() as any;
+      username = discordUser.username || 'Unknown';
+      if (discordUser.avatar) {
+        const ext = discordUser.avatar.startsWith('a_') ? 'gif' : 'png';
+        avatarUrl = `https://cdn.discordapp.com/avatars/${discordId}/${discordUser.avatar}.${ext}?size=128`;
+      }
+      // Discord epoch: 1420070400000
+      accountCreatedAt = new Date((BigInt(discordId) >> 22n + 1420070400000n).toString()).toISOString();
+    }
+  } catch {}
+
+  // Render PNG card
+  const pngBuffer = await renderHlidCard({
     discord_id: discordId,
-    verified: user.status === 'active',
+    username,
+    avatar_url: avatarUrl,
     verified_at: user.verified_at,
-    method: user.method,
-    verified_guild_count: user.verified_guild_count,
-    disposable_email_flag: user.disposable_email_flag,
+    verified_guild_count: user.verified_guild_count ?? 0,
+    account_created_at: accountCreatedAt,
+  });
+
+  return new Response(pngBuffer, {
+    headers: {
+      'Content-Type': 'image/png',
+      'Cache-Control': 'public, max-age=300',
+    },
   });
 });
 // Verify routes: /verify/:token, /verify/:token/complete

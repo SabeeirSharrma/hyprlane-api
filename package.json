@@ -9,7 +9,9 @@
     "types": "wrangler types"
   },
   "dependencies": {
-    "hono": "^4.7.0"
+    "@resvg/resvg-wasm": "^2.6.2",
+    "hono": "^4.7.0",
+    "satori": "^0.26.0"
   },
   "devDependencies": {
     "@types/node": "^26.1.1",
