@@ -165,15 +165,15 @@ verify.post('/phone/:discordId/otp', async (c) => {
     return c.json({ error: 'Invalid phone number — use E.164 format' }, 400);
   }
 
-  // Rate limit: max 3 OTPs per phone per 10 minutes
-  const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+  // Rate limit: max 1 OTP per phone per minute (msg91 free tier: 1/min)
+  const oneMinAgo = new Date(Date.now() - 60 * 1000).toISOString();
   const recentOtps = await supaQuery(
     c.env,
     'phone_otps',
-    `?phone=eq.${encodeURIComponent(body.phone)}&created_at=gt.${tenMinAgo}&select=id`,
+    `?phone=eq.${encodeURIComponent(body.phone)}&created_at=gt.${oneMinAgo}&select=id`,
   );
-  if (recentOtps.length >= 3) {
-    return c.json({ error: 'Too many requests — wait a few minutes' }, 429);
+  if (recentOtps.length >= 1) {
+    return c.json({ error: 'Please wait before requesting another code' }, 429);
   }
 
   // Generate 6-digit OTP
