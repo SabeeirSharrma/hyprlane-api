@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { supaQuery, supaInsert, supaUpsert, supaUpdate } from '../lib/supabase.js';
 import { hashPhone } from '../lib/crypto.js';
+import { sendSms } from '../lib/sms.js';
 import type { Env } from '../types.js';
 
 const verify = new Hono<{ Bindings: Env }>();
@@ -157,13 +158,42 @@ verify.post('/:token/complete', async (c) => {
 
 // POST /phone/:discordId/otp — send OTP to phone
 verify.post('/phone/:discordId/otp', async (c) => {
+  const { discordId } = c.req.param();
   const body = await c.req.json<{ phone: string }>();
 
   if (!body.phone || !body.phone.startsWith('+')) {
     return c.json({ error: 'Invalid phone number — use E.164 format' }, 400);
   }
 
-  // TODO: Integrate with Twilio or SMS provider
+  // Rate limit: max 3 OTPs per phone per 10 minutes
+  const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+  const recentOtps = await supaQuery(
+    c.env,
+    'phone_otps',
+    `?phone=eq.${encodeURIComponent(body.phone)}&created_at=gt.${tenMinAgo}&select=id`,
+  );
+  if (recentOtps.length >= 3) {
+    return c.json({ error: 'Too many requests — wait a few minutes' }, 429);
+  }
+
+  // Generate 6-digit OTP
+  const otp = String(Math.floor(100000 + Math.random() * 900000));
+
+  // Store OTP (expires in 10 minutes)
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+  await supaInsert(c.env, 'phone_otps', {
+    phone: body.phone,
+    otp,
+    discord_id: discordId,
+    expires_at: expiresAt,
+  });
+
+  // Send SMS
+  const result = await sendSms(body.phone, `Your Hyprlane verification code is: ${otp}`, c.env);
+  if (!result.ok) {
+    return c.json({ error: result.error || 'Failed to send SMS' }, 502);
+  }
+
   return c.json({ ok: true, message: 'OTP sent' });
 });
 
@@ -172,7 +202,43 @@ verify.post('/phone/:discordId/confirm', async (c) => {
   const { discordId } = c.req.param();
   const body = await c.req.json<{ phone: string; otp: string }>();
 
-  // TODO: Verify OTP with SMS provider
+  if (!body.phone || !body.otp) {
+    return c.json({ error: 'Missing phone or OTP' }, 400);
+  }
+
+  // Find the most recent unused OTP for this phone+discord
+  const otpRows = await supaQuery(
+    c.env,
+    'phone_otps',
+    `?phone=eq.${encodeURIComponent(body.phone)}&discord_id=eq.${discordId}&used=eq.false&order=created_at.desc&limit=1`,
+  );
+
+  const otpRow = otpRows[0];
+  if (!otpRow) {
+    return c.json({ error: 'No OTP found — request a new code' }, 404);
+  }
+
+  // Check expiry
+  if (new Date(otpRow.expires_at) < new Date()) {
+    return c.json({ error: 'OTP expired — request a new code' }, 410);
+  }
+
+  // Check attempts (max 5)
+  if (otpRow.attempts >= 5) {
+    return c.json({ error: 'Too many attempts — request a new code' }, 429);
+  }
+
+  // Verify OTP
+  if (otpRow.otp !== body.otp) {
+    // Increment attempts
+    await supaUpdate(c.env, 'phone_otps', `?id=eq.${otpRow.id}`, {
+      attempts: otpRow.attempts + 1,
+    });
+    return c.json({ error: 'Invalid code' }, 401);
+  }
+
+  // Mark OTP used
+  await supaUpdate(c.env, 'phone_otps', `?id=eq.${otpRow.id}`, { used: true });
 
   // Hash the phone
   const phoneHash = await hashPhone(body.phone);
@@ -203,6 +269,18 @@ verify.post('/phone/:discordId/confirm', async (c) => {
     phone_linked_at: new Date().toISOString(),
     // Clear flagged status if phone was the gate
     ...(existing[0]?.discord_id === discordId ? { status: 'active', flagged_reason: null } : {}),
+  });
+
+  return c.json({ ok: true });
+});
+
+// DELETE /phone/:discordId — unlink phone
+verify.delete('/phone/:discordId', async (c) => {
+  const { discordId } = c.req.param();
+
+  await supaUpdate(c.env, 'verified_users', `?discord_id=eq.${discordId}`, {
+    phone_hash: null,
+    phone_linked_at: null,
   });
 
   return c.json({ ok: true });
