@@ -29,6 +29,40 @@ dashboard.get('/guilds', async (c) => {
   );
 });
 
+// GET /guilds/:guildId/bot-status — check if bot is in the guild
+dashboard.get('/guilds/:guildId/bot-status', async (c) => {
+  const { guildId } = c.req.param();
+  const session = c.get('session');
+  if (!session?.access_token) return c.json({ error: 'Missing access token' }, 401);
+
+  if (!(await hasManageGuild(session.access_token, guildId))) {
+    return c.json({ error: 'No permission' }, 403);
+  }
+
+  // Check if bot is in the guild by fetching guild info with bot token
+  const botToken = c.env.DISCORD_BOT_TOKEN;
+  if (!botToken) {
+    return c.json({ in_guild: true }); // Assume yes if no token configured
+  }
+
+  try {
+    const res = await fetch(`https://discord.com/api/v10/guilds/${guildId}`, {
+      headers: { Authorization: `Bot ${botToken}` },
+    });
+
+    if (res.ok) {
+      return c.json({ in_guild: true });
+    } else if (res.status === 403 || res.status === 404) {
+      return c.json({ in_guild: false });
+    } else {
+      // Unknown error, assume bot might be in
+      return c.json({ in_guild: true });
+    }
+  } catch {
+    return c.json({ in_guild: true }); // Assume yes on network error
+  }
+});
+
 // GET /guilds/:guildId/config
 dashboard.get('/guilds/:guildId/config', async (c) => {
   const { guildId } = c.req.param();

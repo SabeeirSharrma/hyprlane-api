@@ -4,6 +4,7 @@ export interface Env {
   SUPABASE_ANON_KEY: string;
   DISCORD_CLIENT_ID: string;
   DISCORD_CLIENT_SECRET: string;
+  DISCORD_BOT_TOKEN: string;
   BOT_SERVICE_SECRET: string;
   BOT_WEBHOOK_URL?: string;
   TURNSTILE_SECRET_KEY?: string;
