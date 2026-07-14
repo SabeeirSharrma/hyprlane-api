@@ -47,6 +47,7 @@ dashboard.get('/guilds/:guildId/config', async (c) => {
       verified_role_id: '',
       log_channel_id: '',
       mod_role_id: '',
+      verification_channel_id: '',
       enrolled_features: [],
       feature_config: {},
       plan: 'free',
